@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code History Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .message-content { 
+            word-wrap: break-word; 
+            overflow-wrap: break-word;
+            max-width: 100%;
+        }
+        .conversation-thread { 
+            border-left: 2px solid #e5e7eb; 
+            padding-left: 1rem; 
+            margin-left: 0.5rem; 
+        }
+        .content-scrollable {
+            max-height: 400px;
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+        .code-block {
+            max-width: 100%;
+            overflow-x: auto;
+            white-space: pre;
+            word-break: normal;
+            overflow-wrap: normal;
+        }
+        .tool-content {
+            max-width: 100%;
+            overflow: hidden;
+        }
+        .tool-params {
+            max-height: 200px;
+            overflow-y: auto;
+            overflow-x: hidden;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+        
+        /* Ensure all containers respect width boundaries */
+        * {
+            box-sizing: border-box;
+        }
+        
+        .container {
+            max-width: 100vw;
+            overflow-x: hidden;
+        }
+        
+        #conversations-container > * {
+            max-width: 100%;
+            overflow: hidden;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="container mx-auto px-4 py-8">
+        <header class="mb-8">
+            <h1 class="text-3xl font-bold text-gray-800 mb-2">Claude Code History Viewer</h1>
+            <p class="text-gray-600">Browse your Claude Code conversation history</p>
+        </header>
+
+        <div class="flex gap-6">
+            <!-- Sidebar -->
+            <div class="w-1/4 bg-white rounded-lg shadow-md p-4">
+                <!-- Navigation Breadcrumb -->
+                <div id="breadcrumb" class="mb-4 text-sm text-gray-600">
+                    <span id="breadcrumb-content">Loading...</span>
+                </div>
+                
+                <!-- Projects Section -->
+                <div id="projects-section">
+                    <h2 class="text-lg font-semibold mb-4 text-gray-800">Projects</h2>
+                    <div id="projects-list" class="space-y-2">
+                        <!-- Projects will be populated here -->
+                    </div>
+                </div>
+                
+                <!-- Sessions Section -->
+                <div id="sessions-section" class="hidden">
+                    <div class="flex items-center mb-4">
+                        <button id="back-to-projects" class="text-blue-600 hover:text-blue-800 mr-2">← Back</button>
+                        <h2 class="text-lg font-semibold text-gray-800">Sessions</h2>
+                    </div>
+                    <div id="sessions-list" class="space-y-2">
+                        <!-- Sessions will be populated here -->
+                    </div>
+                </div>
+                
+                <!-- Filters Section -->
+                <div class="mt-6">
+                    <h3 class="text-md font-semibold mb-2 text-gray-800">Filters</h3>
+                    <input type="text" id="search-input" placeholder="Search messages..." 
+                           class="w-full px-3 py-2 border border-gray-300 rounded-md text-sm">
+                    <select id="message-type-filter" class="w-full mt-2 px-3 py-2 border border-gray-300 rounded-md text-sm">
+                        <option value="">All Types</option>
+                        <option value="user">User Messages</option>
+                        <option value="assistant">Assistant Messages</option>
+                        <option value="summary">Summaries</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="flex-1 bg-white rounded-lg shadow-md min-w-0">
+                <div class="p-6">
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-800">Conversation History</h2>
+                            <div id="current-context" class="text-sm text-gray-500 mt-1">
+                                Select a project to get started
+                            </div>
+                        </div>
+                        <div class="text-sm text-gray-500">
+                            <span id="message-count">No messages</span>
+                        </div>
+                    </div>
+                    
+                    <div id="conversations-container" class="space-y-4 max-h-screen overflow-y-auto">
+                        <div id="welcome-message" class="text-center py-12 text-gray-500">
+                            <div class="text-4xl mb-4">💬</div>
+                            <div class="text-lg font-medium mb-2">Welcome to Claude Code History Viewer</div>
+                            <div>Select a project from the sidebar to browse your conversation history</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let allProjects = [];
+        let allConversations = [];
+        let currentProject = null;
+        let currentSession = null;
+        let currentSessionFilter = null;
+
+        // Navigation state
+        const AppState = {
+            VIEW_PROJECTS: 'projects',
+            VIEW_SESSIONS: 'sessions',
+            VIEW_MESSAGES: 'messages'
+        };
+        let currentView = AppState.VIEW_PROJECTS;
+
+        // Fetch and display data
+        async function loadData() {
+            try {
+                await loadProjects();
+                updateBreadcrumb();
+            } catch (error) {
+                console.error('Error loading data:', error);
+            }
+        }
+
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/projects');
+                allProjects = await response.json();
+                displayProjects();
+            } catch (error) {
+                console.error('Error loading projects:', error);
+            }
+        }
+
+        function displayProjects() {
+            const projectsList = document.getElementById('projects-list');
+            projectsList.innerHTML = '';
+            
+            if (allProjects.length === 0) {
+                projectsList.innerHTML = '<div class="text-gray-500 text-sm">No projects found</div>';
+                return;
+            }
+
+            allProjects.forEach(project => {
+                const projectBtn = document.createElement('button');
+                projectBtn.className = 'w-full text-left px-3 py-2 rounded text-gray-700 text-sm hover:bg-gray-100 border';
+                projectBtn.innerHTML = `
+                    <div class="font-medium break-words">${escapeHtml(project.name)}</div>
+                    <div class="text-xs text-gray-500">${project.session_count} session${project.session_count !== 1 ? 's' : ''}</div>
+                `;
+                projectBtn.onclick = () => selectProject(project);
+                projectsList.appendChild(projectBtn);
+            });
+        }
+
+        async function selectProject(project) {
+            currentProject = project;
+            currentView = AppState.VIEW_SESSIONS;
+            
+            try {
+                const response = await fetch(`/api/projects/${project.id}/sessions`);
+                const sessions = await response.json();
+                
+                displaySessions(sessions);
+                showSessionsView();
+                updateBreadcrumb();
+                updateContextInfo(`Project: ${project.name}`);
+            } catch (error) {
+                console.error('Error loading project sessions:', error);
+            }
+        }
+
+        function displaySessions(sessions) {
+            const sessionsList = document.getElementById('sessions-list');
+            sessionsList.innerHTML = '';
+            
+            if (sessions.length === 0) {
+                sessionsList.innerHTML = '<div class="text-gray-500 text-sm">No sessions found</div>';
+                return;
+            }
+
+            sessions.forEach(session => {
+                const sessionBtn = document.createElement('button');
+                sessionBtn.className = 'w-full text-left px-3 py-2 rounded text-gray-700 text-sm hover:bg-gray-100 border';
+                sessionBtn.innerHTML = `
+                    <div class="font-medium break-all text-xs">${session.id.substring(0, 16)}...</div>
+                    <div class="text-xs text-gray-500 mt-1">
+                        ${session.message_count} messages • ${session.modified_display}
+                    </div>
+                `;
+                sessionBtn.onclick = () => selectSession(session);
+                sessionsList.appendChild(sessionBtn);
+            });
+        }
+
+        async function selectSession(session) {
+            currentSession = session;
+            currentView = AppState.VIEW_MESSAGES;
+            
+            try {
+                const response = await fetch(`/api/sessions/${currentProject.id}/${session.id}`);
+                allConversations = await response.json();
+                
+                displayConversations(allConversations);
+                updateMessageCount(allConversations.length);
+                updateBreadcrumb();
+                updateContextInfo(`${currentProject.name} → Session ${session.id.substring(0, 8)}...`);
+                hideWelcomeMessage();
+            } catch (error) {
+                console.error('Error loading session messages:', error);
+            }
+        }
+
+        function displayConversations(conversations) {
+            const container = document.getElementById('conversations-container');
+            container.innerHTML = '';
+
+            conversations.forEach(conv => {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'border-b border-gray-200 pb-4 mb-4 max-w-full overflow-hidden';
+                
+                let messageContent = '';
+                let messageClass = '';
+                let typeLabel = '';
+
+                if (conv.type === 'user' && conv.message) {
+                    messageClass = 'bg-blue-50 border-l-4 border-l-blue-400 pl-4';
+                    typeLabel = 'User';
+                    messageContent = formatMessageContent(conv.message.content, conv);
+                } else if (conv.type === 'assistant' && conv.message) {
+                    messageClass = 'bg-green-50 border-l-4 border-l-green-400 pl-4';
+                    typeLabel = 'Assistant';
+                    messageContent = formatMessageContent(conv.message.content, conv);
+                } else if (conv.type === 'summary') {
+                    messageClass = 'bg-yellow-50 border-l-4 border-l-yellow-400 pl-4';
+                    typeLabel = 'Summary';
+                    messageContent = conv.summary || '';
+                }
+
+                messageDiv.innerHTML = `
+                    <div class="${messageClass} p-4 rounded max-w-full overflow-hidden">
+                        <div class="flex justify-between items-start mb-2">
+                            <span class="text-xs font-semibold px-2 py-1 rounded-full ${getTypeColor(conv.type)}">${typeLabel}</span>
+                            <span class="text-xs text-gray-500">${formatTimestamp(conv.timestamp)}</span>
+                        </div>
+                        <div class="message-content text-sm text-gray-800 max-w-full overflow-hidden">${messageContent}</div>
+                        <div class="mt-2 text-xs text-gray-400 break-all">
+                            ID: ${conv.uuid || conv.leafUuid || 'N/A'} | Session: ${(conv.sessionId || 'N/A').substring(0, 8)}...
+                        </div>
+                    </div>
+                `;
+                
+                container.appendChild(messageDiv);
+            });
+        }
+
+        function formatMessageContent(content, conv) {
+            if (!content) return '';
+            
+            // Handle string content
+            if (typeof content === 'string') {
+                return `<div class="whitespace-pre-wrap break-words">${escapeHtml(content)}</div>`;
+            }
+            
+            // Handle array content (tool use cases)
+            if (Array.isArray(content)) {
+                let html = '';
+                content.forEach(item => {
+                    if (item.type === 'tool_use') {
+                        html += formatToolUse(item);
+                    } else if (item.type === 'tool_result') {
+                        html += formatToolResult(item, conv);
+                    } else if (item.type === 'text') {
+                        html += `<div class="whitespace-pre-wrap break-words mb-2">${escapeHtml(item.text || '')}</div>`;
+                    } else if (typeof item === 'string') {
+                        html += `<div class="whitespace-pre-wrap break-words mb-2">${escapeHtml(item)}</div>`;
+                    }
+                });
+                return html;
+            }
+            
+            return `<div class="content-scrollable"><pre class="code-block text-xs">${escapeHtml(JSON.stringify(content, null, 2))}</pre></div>`;
+        }
+
+        function formatToolUse(toolUse) {
+            return `
+                <div class="bg-purple-100 border border-purple-300 rounded-lg p-3 mb-2 tool-content">
+                    <div class="flex items-center mb-2">
+                        <span class="bg-purple-600 text-white px-2 py-1 rounded text-xs font-semibold">🔧 TOOL CALL</span>
+                        <span class="ml-2 font-medium text-purple-800 break-words">${escapeHtml(toolUse.name)}</span>
+                    </div>
+                    <div class="text-xs text-purple-600 mb-1 break-all">ID: ${escapeHtml(toolUse.id)}</div>
+                    <div class="bg-white rounded p-2 text-xs">
+                        <div class="font-medium text-gray-700 mb-1">Parameters:</div>
+                        <div class="tool-params">
+                            ${formatToolParameters(toolUse.input)}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function formatToolParameters(params) {
+            let html = '<div class="space-y-2">';
+            for (const [key, value] of Object.entries(params)) {
+                html += `<div class="border-b border-gray-200 pb-2">`;
+                html += `<div class="font-semibold text-gray-700 text-xs mb-1">${escapeHtml(key)}:</div>`;
+                
+                if (typeof value === 'string' && value.length > 200) {
+                    // Truncate very long strings
+                    const truncated = value.substring(0, 200);
+                    const remaining = value.length - 200;
+                    html += `<div class="text-gray-600 break-words whitespace-pre-wrap text-xs">`;
+                    html += `${escapeHtml(truncated)}`;
+                    html += `<span class="text-blue-600 cursor-pointer" onclick="toggleFullContent(this)" data-full="${escapeHtml(value)}" data-truncated="${escapeHtml(truncated)}">... (${remaining} more chars - click to expand)</span>`;
+                    html += `</div>`;
+                } else {
+                    html += `<div class="text-gray-600 break-words whitespace-pre-wrap text-xs">${escapeHtml(typeof value === 'string' ? value : JSON.stringify(value, null, 2))}</div>`;
+                }
+                html += `</div>`;
+            }
+            html += '</div>';
+            return html;
+        }
+
+        function toggleFullContent(element) {
+            const parent = element.parentElement;
+            const fullContent = element.getAttribute('data-full');
+            const truncatedContent = element.getAttribute('data-truncated');
+            const isExpanded = element.textContent.includes('click to collapse');
+            
+            if (isExpanded) {
+                parent.innerHTML = `${escapeHtml(truncatedContent)}<span class="text-blue-600 cursor-pointer" onclick="toggleFullContent(this)" data-full="${escapeHtml(fullContent)}" data-truncated="${escapeHtml(truncatedContent)}">... (${fullContent.length - truncatedContent.length} more chars - click to expand)</span>`;
+            } else {
+                parent.innerHTML = `${escapeHtml(fullContent)}<span class="text-blue-600 cursor-pointer" onclick="toggleFullContent(this)" data-full="${escapeHtml(fullContent)}" data-truncated="${escapeHtml(truncatedContent)}"> (click to collapse)</span>`;
+            }
+        }
+
+        function formatToolResult(toolResult, conv) {
+            let resultContent = toolResult.content || '';
+            let additionalInfo = '';
+            
+            // Check if there's toolUseResult data with more details
+            if (conv.toolUseResult) {
+                if (conv.toolUseResult.type === 'text' && conv.toolUseResult.file) {
+                    const file = conv.toolUseResult.file;
+                    additionalInfo = `
+                        <div class="text-xs text-orange-600 mb-2 break-words">
+                            📁 File: ${escapeHtml(file.filePath)} (${file.numLines} lines)
+                        </div>
+                    `;
+                    if (file.content) {
+                        resultContent = file.content;
+                    }
+                }
+            }
+            
+            return `
+                <div class="bg-orange-100 border border-orange-300 rounded-lg p-3 mb-2 tool-content">
+                    <div class="flex items-center mb-2">
+                        <span class="bg-orange-600 text-white px-2 py-1 rounded text-xs font-semibold">📤 TOOL RESULT</span>
+                        <span class="ml-2 text-xs text-orange-600 break-all">ID: ${escapeHtml(toolResult.tool_use_id || 'N/A')}</span>
+                    </div>
+                    ${additionalInfo}
+                    <div class="bg-white rounded p-2 content-scrollable">
+                        <pre class="code-block text-xs text-gray-700">${escapeHtml(resultContent)}</pre>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getTypeColor(type) {
+            switch(type) {
+                case 'user': return 'bg-blue-100 text-blue-800';
+                case 'assistant': return 'bg-green-100 text-green-800';
+                case 'summary': return 'bg-yellow-100 text-yellow-800';
+                default: return 'bg-gray-100 text-gray-800';
+            }
+        }
+
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return 'No timestamp';
+            return new Date(timestamp).toLocaleString();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Navigation functions
+        function showProjectsView() {
+            document.getElementById('projects-section').classList.remove('hidden');
+            document.getElementById('sessions-section').classList.add('hidden');
+            currentView = AppState.VIEW_PROJECTS;
+        }
+
+        function showSessionsView() {
+            document.getElementById('projects-section').classList.add('hidden');
+            document.getElementById('sessions-section').classList.remove('hidden');
+            currentView = AppState.VIEW_SESSIONS;
+        }
+
+        function backToProjects() {
+            currentProject = null;
+            currentSession = null;
+            allConversations = [];
+            
+            showProjectsView();
+            updateBreadcrumb();
+            updateContextInfo('Select a project to get started');
+            updateMessageCount(0);
+            showWelcomeMessage();
+        }
+
+        function updateBreadcrumb() {
+            const breadcrumb = document.getElementById('breadcrumb-content');
+            
+            switch(currentView) {
+                case AppState.VIEW_PROJECTS:
+                    breadcrumb.textContent = 'Projects';
+                    break;
+                case AppState.VIEW_SESSIONS:
+                    breadcrumb.textContent = `Projects → ${currentProject?.name}`;
+                    break;
+                case AppState.VIEW_MESSAGES:
+                    breadcrumb.textContent = `Projects → ${currentProject?.name} → Session`;
+                    break;
+            }
+        }
+
+        function updateContextInfo(text) {
+            document.getElementById('current-context').textContent = text;
+        }
+
+        function hideWelcomeMessage() {
+            const welcome = document.getElementById('welcome-message');
+            if (welcome) welcome.style.display = 'none';
+        }
+
+        function showWelcomeMessage() {
+            const welcome = document.getElementById('welcome-message');
+            if (welcome) welcome.style.display = 'block';
+        }
+
+        function filterBySession(sessionId) {
+            currentSessionFilter = sessionId;
+            applyFilters();
+        }
+
+        function applyFilters() {
+            let filtered = allConversations;
+            
+            // Filter by session
+            if (currentSessionFilter) {
+                filtered = filtered.filter(conv => conv.sessionId === currentSessionFilter);
+            }
+            
+            // Filter by search term
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+            if (searchTerm) {
+                filtered = filtered.filter(conv => {
+                    const content = (conv.message?.content || conv.summary || '').toLowerCase();
+                    return content.includes(searchTerm);
+                });
+            }
+            
+            // Filter by message type
+            const typeFilter = document.getElementById('message-type-filter').value;
+            if (typeFilter) {
+                filtered = filtered.filter(conv => conv.type === typeFilter);
+            }
+            
+            displayConversations(filtered);
+            updateMessageCount(filtered.length);
+        }
+
+        function updateMessageCount(count) {
+            const text = count === 0 ? 'No messages' : `${count} message${count !== 1 ? 's' : ''}`;
+            document.getElementById('message-count').textContent = text;
+        }
+
+        // Event listeners
+        document.getElementById('search-input').addEventListener('input', applyFilters);
+        document.getElementById('message-type-filter').addEventListener('change', applyFilters);
+        document.getElementById('back-to-projects').addEventListener('click', backToProjects);
+
+        // Load data on page load
+        loadData();
+    </script>
+</body>
+</html>
