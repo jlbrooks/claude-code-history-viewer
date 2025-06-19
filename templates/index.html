@@ -40,6 +40,31 @@
             overflow-wrap: break-word;
         }
         
+        /* Upload styles */
+        .upload-area {
+            border: 2px dashed #d1d5db;
+            border-radius: 8px;
+            transition: border-color 0.3s ease;
+        }
+        
+        .upload-area.drag-over {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+        
+        .mode-indicator {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .mode-local { background-color: #dcfce7; color: #166534; }
+        .mode-cloud { background-color: #dbeafe; color: #1e40af; }
+        .mode-hybrid { background-color: #fef3c7; color: #92400e; }
+        
         /* Ensure all containers respect width boundaries */
         * {
             box-sizing: border-box;
@@ -59,8 +84,16 @@
 <body class="bg-gray-50 min-h-screen">
     <div class="container mx-auto px-4 py-8">
         <header class="mb-8">
-            <h1 class="text-3xl font-bold text-gray-800 mb-2">Claude Code History Viewer</h1>
-            <p class="text-gray-600">Browse your Claude Code conversation history</p>
+            <div class="flex justify-between items-start">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-800 mb-2">Claude Code History Viewer</h1>
+                    <p class="text-gray-600">Browse your Claude Code conversation history</p>
+                </div>
+                <div class="text-right">
+                    <span id="mode-indicator" class="mode-indicator">{{ claude_mode }}</span>
+                    <div class="text-xs text-gray-500 mt-1">Mode</div>
+                </div>
+            </div>
         </header>
 
         <div class="flex gap-6">
@@ -69,6 +102,31 @@
                 <!-- Navigation Breadcrumb -->
                 <div id="breadcrumb" class="mb-4 text-sm text-gray-600">
                     <span id="breadcrumb-content">Loading...</span>
+                </div>
+                
+                <!-- File Upload Section -->
+                <div id="upload-section" class="mb-6 hidden">
+                    <h3 class="text-md font-semibold mb-3 text-gray-800">Upload Conversation</h3>
+                    <div id="upload-area" class="upload-area p-4 text-center cursor-pointer mb-3">
+                        <div class="text-gray-400 text-sm">
+                            <div class="text-2xl mb-2">📁</div>
+                            <div>Drag & drop JSONL files here</div>
+                            <div class="text-xs mt-1">or click to browse</div>
+                        </div>
+                        <input type="file" id="file-input" accept=".jsonl" class="hidden" multiple>
+                    </div>
+                    <div id="upload-status" class="text-xs text-gray-500 hidden"></div>
+                    
+                    <!-- Uploaded Files Management -->
+                    <div id="uploaded-files-section" class="mt-4 hidden">
+                        <div class="flex justify-between items-center mb-2">
+                            <h4 class="text-sm font-medium text-gray-700">Uploaded Files</h4>
+                            <button id="refresh-uploads" class="text-xs text-blue-600 hover:text-blue-800">Refresh</button>
+                        </div>
+                        <div id="uploaded-files-list" class="space-y-1">
+                            <!-- Uploaded files will be listed here -->
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Projects Section -->
@@ -137,6 +195,7 @@
         let currentProject = null;
         let currentSession = null;
         let currentSessionFilter = null;
+        let appConfig = null;
 
         // Navigation state
         const AppState = {
@@ -149,11 +208,200 @@
         // Fetch and display data
         async function loadData() {
             try {
+                await loadConfig();
                 await loadProjects();
+                setupUploadFunctionality();
                 updateBreadcrumb();
             } catch (error) {
                 console.error('Error loading data:', error);
             }
+        }
+
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                appConfig = await response.json();
+                updateModeIndicator();
+                updateUploadVisibility();
+            } catch (error) {
+                console.error('Error loading configuration:', error);
+            }
+        }
+
+        function updateModeIndicator() {
+            const indicator = document.getElementById('mode-indicator');
+            if (appConfig && appConfig.mode) {
+                indicator.textContent = appConfig.mode;
+                indicator.className = `mode-indicator mode-${appConfig.mode}`;
+            }
+        }
+
+        function updateUploadVisibility() {
+            const uploadSection = document.getElementById('upload-section');
+            if (appConfig && (appConfig.mode === 'cloud' || appConfig.mode === 'hybrid')) {
+                uploadSection.classList.remove('hidden');
+                loadUploadedFiles();
+            } else {
+                uploadSection.classList.add('hidden');
+            }
+        }
+
+        // File upload functionality
+        function setupUploadFunctionality() {
+            if (!appConfig || appConfig.mode === 'local') return;
+
+            const uploadArea = document.getElementById('upload-area');
+            const fileInput = document.getElementById('file-input');
+            const refreshBtn = document.getElementById('refresh-uploads');
+
+            // Click to upload
+            uploadArea.addEventListener('click', () => {
+                fileInput.click();
+            });
+
+            // File input change
+            fileInput.addEventListener('change', (e) => {
+                handleFiles(e.target.files);
+            });
+
+            // Drag and drop
+            uploadArea.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadArea.classList.add('drag-over');
+            });
+
+            uploadArea.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('drag-over');
+            });
+
+            uploadArea.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadArea.classList.remove('drag-over');
+                handleFiles(e.dataTransfer.files);
+            });
+
+            // Refresh button
+            refreshBtn.addEventListener('click', () => {
+                loadUploadedFiles();
+                loadProjects(); // Refresh projects to show newly uploaded files
+            });
+        }
+
+        async function handleFiles(files) {
+            if (!files.length) return;
+
+            const status = document.getElementById('upload-status');
+            status.classList.remove('hidden');
+
+            for (let file of files) {
+                if (!file.name.endsWith('.jsonl')) {
+                    status.textContent = `Skipping ${file.name}: Not a JSONL file`;
+                    continue;
+                }
+
+                status.textContent = `Uploading ${file.name}...`;
+                
+                try {
+                    await uploadFile(file);
+                    status.textContent = `Successfully uploaded ${file.name}`;
+                    status.className = 'text-xs text-green-600';
+                } catch (error) {
+                    status.textContent = `Failed to upload ${file.name}: ${error.message}`;
+                    status.className = 'text-xs text-red-600';
+                }
+            }
+
+            // Refresh data after upload
+            setTimeout(() => {
+                loadUploadedFiles();
+                loadProjects();
+                status.classList.add('hidden');
+            }, 2000);
+        }
+
+        async function uploadFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch('/api/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.error || 'Upload failed');
+            }
+
+            return response.json();
+        }
+
+        async function loadUploadedFiles() {
+            if (!appConfig || appConfig.mode === 'local') return;
+
+            try {
+                const response = await fetch('/api/uploaded-files');
+                const files = await response.json();
+                displayUploadedFiles(files);
+            } catch (error) {
+                console.error('Error loading uploaded files:', error);
+            }
+        }
+
+        function displayUploadedFiles(files) {
+            const container = document.getElementById('uploaded-files-list');
+            const section = document.getElementById('uploaded-files-section');
+            
+            if (!files.length) {
+                section.classList.add('hidden');
+                return;
+            }
+
+            section.classList.remove('hidden');
+            container.innerHTML = '';
+
+            files.forEach(file => {
+                const fileDiv = document.createElement('div');
+                fileDiv.className = 'flex justify-between items-center p-2 bg-gray-50 rounded text-xs';
+                fileDiv.innerHTML = `
+                    <div class="flex-1 min-w-0">
+                        <div class="font-medium text-gray-700 truncate">${escapeHtml(file.filename)}</div>
+                        <div class="text-gray-500">${formatFileSize(file.file_size)} • ${formatTimestamp(file.upload_time)}</div>
+                    </div>
+                    <button onclick="deleteUploadedFile('${escapeHtml(file.filename)}')" 
+                            class="text-red-600 hover:text-red-800 ml-2 p-1">✕</button>
+                `;
+                container.appendChild(fileDiv);
+            });
+        }
+
+        async function deleteUploadedFile(filename) {
+            if (!confirm(`Delete ${filename}?`)) return;
+
+            try {
+                const response = await fetch(`/api/uploaded-files/${encodeURIComponent(filename)}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    loadUploadedFiles();
+                    loadProjects(); // Refresh projects
+                } else {
+                    const error = await response.json();
+                    alert(`Failed to delete file: ${error.error}`);
+                }
+            } catch (error) {
+                alert(`Failed to delete file: ${error.message}`);
+            }
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
         }
 
         async function loadProjects() {
@@ -178,8 +426,15 @@
             allProjects.forEach(project => {
                 const projectBtn = document.createElement('button');
                 projectBtn.className = 'w-full text-left px-3 py-2 rounded text-gray-700 text-sm hover:bg-gray-100 border';
+                
+                const sourceIcon = project.source === 'uploaded' ? '☁️' : '📁';
+                const sourceText = project.source === 'uploaded' ? 'Uploaded' : 'Local';
+                
                 projectBtn.innerHTML = `
-                    <div class="font-medium break-words">${escapeHtml(project.name)}</div>
+                    <div class="flex justify-between items-start">
+                        <div class="font-medium break-words flex-1">${escapeHtml(project.name)}</div>
+                        <span class="text-xs text-gray-400 ml-1" title="${sourceText}">${sourceIcon}</span>
+                    </div>
                     <div class="text-xs text-gray-500">${project.session_count} session${project.session_count !== 1 ? 's' : ''}</div>
                 `;
                 projectBtn.onclick = () => selectProject(project);

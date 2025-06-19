@@ -9,6 +9,9 @@ A local web application for browsing and exploring your Claude Code conversation
 - **Tool Interaction Display** - Beautifully rendered tool calls and results
 - **Smart Content Handling** - Proper overflow handling for long content
 - **Search & Filtering** - Find specific messages and interactions
+- **File Upload Support** - Upload and view conversation files in the cloud
+- **Dual Mode Operation** - Local, cloud, or hybrid functionality
+- **Session Management** - Automatic cleanup of uploaded files
 - **Responsive Design** - Clean Tailwind CSS interface
 
 ## Installation
@@ -21,6 +24,7 @@ A local web application for browsing and exploring your Claude Code conversation
 
 ## Usage
 
+### Local Mode (Default)
 1. **Start the application:**
    ```bash
    uv run python app.py
@@ -36,6 +40,27 @@ A local web application for browsing and exploring your Claude Code conversation
    - Choose a session to view conversations
    - Use search and filters to find specific content
    - Click tool interactions to expand/collapse details
+
+### Cloud Mode (File Upload)
+For cloud deployment or file upload functionality:
+
+1. **Set environment variables:**
+   ```bash
+   export CLAUDE_MODE=cloud  # or hybrid for both local and upload
+   export SECRET_KEY=your-secret-key-here
+   uv run python app.py
+   ```
+
+2. **Upload conversation files:**
+   - Drag and drop JSONL files into the upload area
+   - Or click to browse and select files
+   - View uploaded conversations using the same interface
+   - Delete files when no longer needed
+
+### Operating Modes
+- **LOCAL**: Only show local Claude Code projects (default)
+- **CLOUD**: Only show upload functionality
+- **HYBRID**: Show both local projects and upload functionality
 
 ## How It Works
 
@@ -67,7 +92,44 @@ The viewer specially handles Claude Code tool interactions:
 
 - Python 3.8+
 - Flask 3.0.0
-- Access to `~/.claude/projects/` directory
+- Access to `~/.claude/projects/` directory (for local mode)
+
+## Configuration
+
+The application can be configured using environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLAUDE_MODE` | `hybrid` | Operating mode: `local`, `cloud`, or `hybrid` |
+| `SECRET_KEY` | `dev-secret-key...` | Flask secret key (change for production) |
+| `UPLOAD_FOLDER` | System temp dir | Directory for uploaded files |
+| `MAX_CONTENT_LENGTH` | `10485760` | Max upload size in bytes (10MB) |
+| `SESSION_TIMEOUT_HOURS` | `24` | Hours before uploaded files are cleaned up |
+
+## Cloud Deployment
+
+For production deployment:
+
+1. **Set production environment variables:**
+   ```bash
+   export CLAUDE_MODE=cloud
+   export SECRET_KEY=your-secure-random-secret-key
+   export UPLOAD_FOLDER=/app/uploads
+   export MAX_CONTENT_LENGTH=52428800  # 50MB
+   ```
+
+2. **Use a production WSGI server:**
+   ```bash
+   pip install gunicorn
+   gunicorn -w 4 -b 0.0.0.0:5000 app:app
+   ```
+
+3. **Security considerations:**
+   - Set a strong, random SECRET_KEY
+   - Configure appropriate file size limits
+   - Set up proper session cleanup
+   - Use HTTPS in production
+   - Consider rate limiting for uploads
 
 ## Development
 
