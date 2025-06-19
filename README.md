@@ -16,14 +16,14 @@ A local web application for browsing and exploring your Claude Code conversation
 1. **Clone or download this repository**
 2. **Install dependencies:**
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
 
 ## Usage
 
 1. **Start the application:**
    ```bash
-   python3 app.py
+   uv run python app.py
    ```
 
 2. **Open your browser and go to:**
@@ -65,7 +65,7 @@ The viewer specially handles Claude Code tool interactions:
 
 ## Requirements
 
-- Python 3.6+
+- Python 3.8+
 - Flask 3.0.0
 - Access to `~/.claude/projects/` directory
 
@@ -74,7 +74,7 @@ The viewer specially handles Claude Code tool interactions:
 The app consists of:
 - `app.py` - Flask backend with Claude project scanning
 - `templates/index.html` - Frontend with Tailwind CSS
-- `requirements.txt` - Python dependencies
+- `pyproject.toml` - Python dependencies and project configuration
 
 ---
 

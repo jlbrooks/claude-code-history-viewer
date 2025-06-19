@@ -1,0 +1,11 @@
+[project]
+name = "claude-code-history-viewer"
+version = "0.1.0"
+description = "A local web application for browsing and exploring your Claude Code conversation history"
+requires-python = ">=3.8"
+dependencies = [
+    "flask==3.0.0",
+]
+
+[tool.uv]
+dev-dependencies = []
