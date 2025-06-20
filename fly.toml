@@ -7,9 +7,9 @@ primary_region = "sjc"
 
 [env]
   CLAUDE_MODE = "cloud"
-  UPLOAD_FOLDER = "/app/uploads"
   MAX_CONTENT_LENGTH = "52428800"  # 50MB
   SESSION_TIMEOUT_HOURS = "24"
+  SUPABASE_BUCKET = "claude-logs-uploads"
 
 [http_service]
   internal_port = 8080
@@ -31,9 +31,3 @@ primary_region = "sjc"
   cpus = 1
   memory_mb = 512
 
-[[mounts]]
-  source = "uploads_data"
-  destination = "/app/uploads"
-
-[deploy]
-  release_command = "python -c 'import os; os.makedirs(\"/app/uploads/sessions\", exist_ok=True)'"

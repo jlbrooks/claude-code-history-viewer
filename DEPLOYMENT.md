@@ -14,7 +14,19 @@ This guide walks you through deploying Claude Logs to fly.io.
    flyctl auth signup  # or flyctl auth login
    ```
 
-3. **Verify your account** (may require payment method for resource allocation)
+3. **Set up Supabase project**:
+   - Create a free account at [supabase.com](https://supabase.com)
+   - Create a new project
+   - Get your project URL and service role key from Settings → API
+   - Enable Storage in your project dashboard
+
+4. **Export Supabase credentials**:
+   ```bash
+   export SUPABASE_URL="https://your-project.supabase.co"
+   export SUPABASE_SERVICE_KEY="your-service-role-key"
+   ```
+
+5. **Verify your fly.io account** (may require payment method for resource allocation)
 
 ## Quick Deployment
 
@@ -26,8 +38,8 @@ Use the provided deployment script for automated setup:
 
 This script will:
 - Create the fly.io app
-- Set up persistent storage volume
-- Generate and set a secure SECRET_KEY
+- Validate Supabase configuration
+- Generate and set secure environment variables
 - Deploy the application
 - Open the deployed app in your browser
 
@@ -41,29 +53,26 @@ If you prefer to deploy manually:
 flyctl apps create claude-logs
 ```
 
-### 2. Create Persistent Storage
-
-```bash
-flyctl volumes create uploads_data --region sjc --size 1
-```
-
-### 3. Set Environment Variables
+### 2. Set Environment Variables
 
 ```bash
 # Generate a secure secret key
 export SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 
-# Set the secret in fly.io
-flyctl secrets set SECRET_KEY="$SECRET_KEY"
+# Set all secrets in fly.io
+flyctl secrets set \
+    SECRET_KEY="$SECRET_KEY" \
+    SUPABASE_URL="$SUPABASE_URL" \
+    SUPABASE_SERVICE_KEY="$SUPABASE_SERVICE_KEY"
 ```
 
-### 4. Deploy
+### 3. Deploy
 
 ```bash
 flyctl deploy
 ```
 
-### 5. Open Application
+### 4. Open Application
 
 ```bash
 flyctl open
@@ -74,7 +83,7 @@ flyctl open
 The application is configured through `fly.toml`:
 
 - **Mode**: Set to `cloud` for upload functionality
-- **Storage**: 1GB persistent volume mounted at `/app/uploads`
+- **Storage**: Supabase storage for file uploads
 - **Memory**: 512MB (adjustable based on usage)
 - **Auto-scaling**: Scales to 0 when not in use
 - **Health checks**: Monitors `/health` endpoint
@@ -84,7 +93,9 @@ The application is configured through `fly.toml`:
 | Variable | Value | Description |
 |----------|--------|-------------|
 | `CLAUDE_MODE` | `cloud` | Enables upload functionality |
-| `UPLOAD_FOLDER` | `/app/uploads` | Persistent storage location |
+| `SUPABASE_URL` | `https://your-project.supabase.co` | Supabase project URL |
+| `SUPABASE_SERVICE_KEY` | `<service-key>` | Supabase service role key |
+| `SUPABASE_BUCKET` | `claude-logs-uploads` | Storage bucket name |
 | `MAX_CONTENT_LENGTH` | `52428800` | 50MB upload limit |
 | `SESSION_TIMEOUT_HOURS` | `24` | Session cleanup interval |
 | `SECRET_KEY` | `<random>` | Flask session security |
@@ -141,10 +152,13 @@ flyctl ssh console -C "ls -la /app/uploads"
 
 ### Common Issues
 
-1. **Volume not mounting**:
+1. **Supabase connection issues**:
    ```bash
-   flyctl volumes list
-   flyctl volumes create uploads_data --region sjc --size 1
+   # Check environment variables are set
+   flyctl secrets list
+   
+   # Verify Supabase credentials
+   flyctl ssh console -C "env | grep SUPABASE"
    ```
 
 2. **App not starting**:
@@ -154,10 +168,16 @@ flyctl ssh console -C "ls -la /app/uploads"
    ```
 
 3. **Upload failures**:
-   - Check volume is mounted: `flyctl ssh console -C "df -h"`
-   - Verify permissions: `flyctl ssh console -C "ls -la /app/"`
+   - Check Supabase bucket exists and permissions are correct
+   - Verify service key has storage permissions
+   - Check application logs: `flyctl logs`
 
-4. **Memory issues**:
+4. **Storage bucket issues**:
+   - Create bucket manually in Supabase dashboard
+   - Verify bucket name matches `SUPABASE_BUCKET` environment variable
+   - Check storage policies allow service role access
+
+5. **Memory issues**:
    ```bash
    flyctl scale memory 1024  # Scale to 1GB
    ```

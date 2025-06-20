@@ -8,6 +8,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from abc import ABC, abstractmethod
 from werkzeug.utils import secure_filename
+from supabase import create_client, Client
+from io import BytesIO
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -17,6 +19,11 @@ UPLOAD_FOLDER = os.environ.get('UPLOAD_FOLDER', tempfile.gettempdir())
 MAX_CONTENT_LENGTH = int(os.environ.get('MAX_CONTENT_LENGTH', 10 * 1024 * 1024))  # 10MB
 CLAUDE_MODE = os.environ.get('CLAUDE_MODE', 'hybrid').lower()  # local, cloud, hybrid
 SESSION_TIMEOUT_HOURS = int(os.environ.get('SESSION_TIMEOUT_HOURS', 24))
+
+# Supabase Configuration
+SUPABASE_URL = os.environ.get('SUPABASE_URL')
+SUPABASE_SERVICE_KEY = os.environ.get('SUPABASE_SERVICE_KEY')
+SUPABASE_BUCKET = os.environ.get('SUPABASE_BUCKET', 'claude-logs-uploads')
 
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
@@ -131,40 +138,68 @@ class LocalDataManager(DataManager):
         
         return conversations
 
-class CloudDataManager(DataManager):
-    """Data manager for uploaded files"""
+class SupabaseDataManager(DataManager):
+    """Data manager for Supabase storage"""
     
-    def __init__(self, upload_dir):
-        self.upload_dir = upload_dir
+    def __init__(self, supabase_url, supabase_key, bucket_name):
+        if not supabase_url or not supabase_key:
+            raise ValueError("Supabase URL and Service Key are required")
         
-    def _get_session_dir(self):
-        """Get session-specific upload directory"""
+        self.supabase: Client = create_client(supabase_url, supabase_key)
+        self.bucket_name = bucket_name
+        self._ensure_bucket_exists()
+        
+    def _ensure_bucket_exists(self):
+        """Ensure the storage bucket exists"""
+        try:
+            # Try to get bucket info, create if it doesn't exist
+            self.supabase.storage.get_bucket(self.bucket_name)
+        except Exception:
+            try:
+                # Create bucket if it doesn't exist
+                self.supabase.storage.create_bucket(self.bucket_name, {
+                    'public': False,
+                    'file_size_limit': MAX_CONTENT_LENGTH,
+                    'allowed_mime_types': ['application/json', 'text/plain']
+                })
+            except Exception as e:
+                print(f"Warning: Could not create bucket {self.bucket_name}: {e}")
+    
+    def _get_session_id(self):
+        """Get or create session ID"""
         if 'session_id' not in session:
             session['session_id'] = str(uuid.uuid4())
-        
-        session_dir = os.path.join(self.upload_dir, 'sessions', session['session_id'])
-        os.makedirs(session_dir, exist_ok=True)
-        return session_dir
+        return session['session_id']
+    
+    def _get_session_prefix(self):
+        """Get session-specific prefix for file storage"""
+        return f"{self._get_session_id()}/"
     
     def _get_uploaded_files(self):
         """Get list of uploaded files for current session"""
-        session_dir = self._get_session_dir()
+        session_prefix = self._get_session_prefix()
         files = []
         
-        if os.path.exists(session_dir):
-            for filename in os.listdir(session_dir):
-                if filename.endswith('.jsonl'):
-                    file_path = os.path.join(session_dir, filename)
+        try:
+            # List files in the session directory
+            result = self.supabase.storage.from_(self.bucket_name).list(session_prefix.rstrip('/'))
+            
+            for file_obj in result:
+                if file_obj['name'].endswith('.jsonl'):
                     try:
-                        stat = os.stat(file_path)
+                        # Get file metadata
+                        file_path = f"{session_prefix}{file_obj['name']}"
+                        
                         files.append({
-                            'filename': filename,
+                            'filename': file_obj['name'],
                             'file_path': file_path,
-                            'upload_time': datetime.fromtimestamp(stat.st_ctime),
-                            'file_size': stat.st_size
+                            'upload_time': datetime.fromisoformat(file_obj['created_at'].replace('Z', '+00:00')),
+                            'file_size': file_obj.get('metadata', {}).get('size', 0)
                         })
                     except Exception as e:
-                        print(f"Error processing uploaded file {filename}: {e}")
+                        print(f"Error processing uploaded file {file_obj['name']}: {e}")
+        except Exception as e:
+            print(f"Error listing uploaded files: {e}")
         
         return sorted(files, key=lambda x: x['upload_time'], reverse=True)
     
@@ -195,10 +230,12 @@ class CloudDataManager(DataManager):
         
         for file_info in uploaded_files:
             try:
-                # Count messages in file
+                # Download and count messages in file
                 message_count = 0
-                with open(file_info['file_path'], 'r', encoding='utf-8') as f:
-                    for line in f:
+                file_content = self._download_file_content(file_info['file_path'])
+                
+                if file_content:
+                    for line in file_content.split('\n'):
                         if line.strip():
                             message_count += 1
                 
@@ -224,78 +261,123 @@ class CloudDataManager(DataManager):
         if project_id != 'uploaded':
             return []
         
-        session_dir = self._get_session_dir()
-        session_file = os.path.join(session_dir, f"{session_id}.jsonl")
+        session_prefix = self._get_session_prefix()
+        file_path = f"{session_prefix}{session_id}.jsonl"
         
-        if not os.path.exists(session_file):
-            return []
+        try:
+            file_content = self._download_file_content(file_path)
+            if not file_content:
+                return []
             
-        conversations = []
-        with open(session_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                try:
-                    data = json.loads(line.strip())
-                    conversations.append(data)
-                except json.JSONDecodeError:
-                    continue
-        
-        return conversations
+            conversations = []
+            for line in file_content.split('\n'):
+                line = line.strip()
+                if line:
+                    try:
+                        data = json.loads(line)
+                        conversations.append(data)
+                    except json.JSONDecodeError:
+                        continue
+            
+            return conversations
+        except Exception as e:
+            print(f"Error parsing session {session_id}: {e}")
+            return []
+    
+    def _download_file_content(self, file_path):
+        """Download file content from Supabase storage"""
+        try:
+            response = self.supabase.storage.from_(self.bucket_name).download(file_path)
+            return response.decode('utf-8')
+        except Exception as e:
+            print(f"Error downloading file {file_path}: {e}")
+            return None
     
     def save_uploaded_file(self, file, original_filename):
-        """Save an uploaded file"""
-        session_dir = self._get_session_dir()
-        
+        """Save an uploaded file to Supabase storage"""
         # Secure the filename
         filename = secure_filename(original_filename)
         if not filename.endswith('.jsonl'):
             filename += '.jsonl'
         
-        # Ensure unique filename
+        # Ensure unique filename within session
+        session_prefix = self._get_session_prefix()
         counter = 1
         base_name = filename.replace('.jsonl', '')
-        while os.path.exists(os.path.join(session_dir, filename)):
+        original_filename = filename
+        
+        while self._file_exists(f"{session_prefix}{filename}"):
             filename = f"{base_name}_{counter}.jsonl"
             counter += 1
         
-        file_path = os.path.join(session_dir, filename)
-        file.save(file_path)
+        # Upload file to Supabase storage
+        file_path = f"{session_prefix}{filename}"
         
-        return filename
+        try:
+            # Read file content
+            file.seek(0)
+            file_content = file.read()
+            
+            # Upload to Supabase
+            self.supabase.storage.from_(self.bucket_name).upload(
+                file_path, 
+                file_content,
+                file_options={
+                    'content-type': 'application/json',
+                    'cache-control': '3600'
+                }
+            )
+            
+            return filename
+        except Exception as e:
+            print(f"Error uploading file {filename}: {e}")
+            raise
     
     def delete_uploaded_file(self, filename):
-        """Delete an uploaded file"""
-        session_dir = self._get_session_dir()
-        file_path = os.path.join(session_dir, secure_filename(filename))
+        """Delete an uploaded file from Supabase storage"""
+        session_prefix = self._get_session_prefix()
+        file_path = f"{session_prefix}{secure_filename(filename)}"
         
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        try:
+            self.supabase.storage.from_(self.bucket_name).remove([file_path])
             return True
-        return False
+        except Exception as e:
+            print(f"Error deleting file {filename}: {e}")
+            return False
+    
+    def _file_exists(self, file_path):
+        """Check if file exists in Supabase storage"""
+        try:
+            # Try to get file info
+            self.supabase.storage.from_(self.bucket_name).download(file_path)
+            return True
+        except:
+            return False
 
 class HybridDataManager(DataManager):
     """Data manager that combines local and cloud data"""
     
-    def __init__(self, local_manager, cloud_manager):
+    def __init__(self, local_manager, supabase_manager):
         self.local_manager = local_manager
-        self.cloud_manager = cloud_manager
+        self.supabase_manager = supabase_manager
     
     def get_projects(self):
         """Get projects from both local and cloud sources"""
         local_projects = self.local_manager.get_projects()
-        cloud_projects = self.cloud_manager.get_projects()
+        cloud_projects = self.supabase_manager.get_projects()
         return local_projects + cloud_projects
     
     def get_project_sessions(self, project_id):
         """Get sessions from appropriate source"""
         if project_id == 'uploaded':
-            return self.cloud_manager.get_project_sessions(project_id)
+            return self.supabase_manager.get_project_sessions(project_id)
         else:
             return self.local_manager.get_project_sessions(project_id)
     
     def parse_session(self, project_id, session_id):
         """Parse session from appropriate source"""
         if project_id == 'uploaded':
-            return self.cloud_manager.parse_session(project_id, session_id)
+            return self.supabase_manager.parse_session(project_id, session_id)
         else:
             return self.local_manager.parse_session(project_id, session_id)
 
@@ -323,39 +405,32 @@ def validate_jsonl_file(file):
 
 # Initialize data managers based on mode
 local_manager = LocalDataManager()
-cloud_manager = CloudDataManager(UPLOAD_FOLDER)
+
+# Initialize Supabase manager if credentials are available
+supabase_manager = None
+if SUPABASE_URL and SUPABASE_SERVICE_KEY:
+    try:
+        supabase_manager = SupabaseDataManager(SUPABASE_URL, SUPABASE_SERVICE_KEY, SUPABASE_BUCKET)
+    except Exception as e:
+        print(f"Warning: Failed to initialize Supabase storage: {e}")
+        print("Falling back to local-only mode")
 
 if CLAUDE_MODE == 'local':
     data_manager = local_manager
 elif CLAUDE_MODE == 'cloud':
-    data_manager = cloud_manager
+    if supabase_manager:
+        data_manager = supabase_manager
+    else:
+        raise ValueError("Cloud mode requires Supabase configuration (SUPABASE_URL and SUPABASE_SERVICE_KEY)")
 else:  # hybrid
-    data_manager = HybridDataManager(local_manager, cloud_manager)
-
-# Cleanup old session files
-def cleanup_old_sessions():
-    """Remove old session directories"""
-    sessions_dir = os.path.join(UPLOAD_FOLDER, 'sessions')
-    if not os.path.exists(sessions_dir):
-        return
-    
-    cutoff_time = datetime.now() - timedelta(hours=SESSION_TIMEOUT_HOURS)
-    
-    for session_id in os.listdir(sessions_dir):
-        session_path = os.path.join(sessions_dir, session_id)
-        if os.path.isdir(session_path):
-            try:
-                # Check last modified time
-                stat = os.stat(session_path)
-                if datetime.fromtimestamp(stat.st_mtime) < cutoff_time:
-                    shutil.rmtree(session_path)
-                    print(f"Cleaned up old session: {session_id}")
-            except Exception as e:
-                print(f"Error cleaning up session {session_id}: {e}")
+    if supabase_manager:
+        data_manager = HybridDataManager(local_manager, supabase_manager)
+    else:
+        print("Warning: Supabase not configured, falling back to local-only mode")
+        data_manager = local_manager
 
 @app.route('/')
 def index():
-    cleanup_old_sessions()  # Clean up on each page load
     return render_template('index.html', claude_mode=CLAUDE_MODE)
 
 @app.route('/health')
@@ -413,7 +488,10 @@ def api_upload():
         return jsonify({'error': f'Invalid file: {message}'}), 400
     
     try:
-        filename = cloud_manager.save_uploaded_file(file, file.filename)
+        if not supabase_manager:
+            return jsonify({'error': 'Storage not configured'}), 500
+            
+        filename = supabase_manager.save_uploaded_file(file, file.filename)
         return jsonify({
             'success': True,
             'filename': filename,
@@ -429,7 +507,10 @@ def api_uploaded_files():
         return jsonify([])
     
     try:
-        files = cloud_manager._get_uploaded_files()
+        if not supabase_manager:
+            return jsonify({'error': 'Storage not configured'}), 500
+            
+        files = supabase_manager._get_uploaded_files()
         return jsonify([{
             'filename': f['filename'],
             'upload_time': f['upload_time'].isoformat(),
@@ -445,7 +526,10 @@ def api_delete_uploaded_file(filename):
         return jsonify({'error': 'File management not available in local mode'}), 403
     
     try:
-        success = cloud_manager.delete_uploaded_file(filename)
+        if not supabase_manager:
+            return jsonify({'error': 'Storage not configured'}), 500
+            
+        success = supabase_manager.delete_uploaded_file(filename)
         if success:
             return jsonify({'success': True, 'message': 'File deleted successfully'})
         else:

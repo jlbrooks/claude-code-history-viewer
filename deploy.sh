@@ -28,20 +28,32 @@ if ! flyctl apps list | grep -q "claude-logs"; then
     flyctl apps create claude-logs
 fi
 
-# Create volume for persistent storage if it doesn't exist
-echo "💾 Setting up persistent storage..."
-if ! flyctl volumes list | grep -q "uploads_data"; then
-    echo "Creating volume for uploads..."
-    flyctl volumes create uploads_data --region sjc --size 1
-fi
-
 # Set secrets
 echo "🔑 Setting up secrets..."
+
+# Generate SECRET_KEY if not provided
 if [ -z "$SECRET_KEY" ]; then
     SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 fi
 
-flyctl secrets set SECRET_KEY="$SECRET_KEY"
+# Check for required Supabase environment variables
+if [ -z "$SUPABASE_URL" ]; then
+    echo "❗ SUPABASE_URL environment variable is required"
+    echo "   Set it with: export SUPABASE_URL=your-supabase-project-url"
+    exit 1
+fi
+
+if [ -z "$SUPABASE_SERVICE_KEY" ]; then
+    echo "❗ SUPABASE_SERVICE_KEY environment variable is required"
+    echo "   Set it with: export SUPABASE_SERVICE_KEY=your-supabase-service-key"
+    exit 1
+fi
+
+# Set all secrets
+flyctl secrets set \
+    SECRET_KEY="$SECRET_KEY" \
+    SUPABASE_URL="$SUPABASE_URL" \
+    SUPABASE_SERVICE_KEY="$SUPABASE_SERVICE_KEY"
 
 echo "📦 Deploying application..."
 flyctl deploy

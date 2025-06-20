@@ -102,13 +102,23 @@ The application can be configured using environment variables:
 |----------|---------|-------------|
 | `CLAUDE_MODE` | `hybrid` | Operating mode: `local`, `cloud`, or `hybrid` |
 | `SECRET_KEY` | `dev-secret-key...` | Flask secret key (change for production) |
-| `UPLOAD_FOLDER` | System temp dir | Directory for uploaded files |
+| `SUPABASE_URL` | None | Supabase project URL (required for cloud mode) |
+| `SUPABASE_SERVICE_KEY` | None | Supabase service role key (required for cloud mode) |
+| `SUPABASE_BUCKET` | `claude-logs-uploads` | Storage bucket name |
 | `MAX_CONTENT_LENGTH` | `10485760` | Max upload size in bytes (10MB) |
 | `SESSION_TIMEOUT_HOURS` | `24` | Hours before uploaded files are cleaned up |
 
 ## Cloud Deployment
 
 ### Fly.io Deployment (Recommended)
+
+**Prerequisites:**
+1. Set up a [Supabase](https://supabase.com) project and enable Storage
+2. Export your Supabase credentials:
+   ```bash
+   export SUPABASE_URL="https://your-project.supabase.co"
+   export SUPABASE_SERVICE_KEY="your-service-role-key"
+   ```
 
 Deploy to fly.io with one command:
 
@@ -119,8 +129,10 @@ Deploy to fly.io with one command:
 Or manually:
 ```bash
 flyctl apps create claude-logs
-flyctl volumes create uploads_data --region sjc --size 1
-flyctl secrets set SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+flyctl secrets set \
+    SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" \
+    SUPABASE_URL="$SUPABASE_URL" \
+    SUPABASE_SERVICE_KEY="$SUPABASE_SERVICE_KEY"
 flyctl deploy
 ```
 
@@ -134,7 +146,8 @@ For other cloud providers:
    ```bash
    export CLAUDE_MODE=cloud
    export SECRET_KEY=your-secure-random-secret-key
-   export UPLOAD_FOLDER=/app/uploads
+   export SUPABASE_URL=https://your-project.supabase.co
+   export SUPABASE_SERVICE_KEY=your-service-role-key
    export MAX_CONTENT_LENGTH=52428800  # 50MB
    ```
 

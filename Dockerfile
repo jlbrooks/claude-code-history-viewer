@@ -25,9 +25,6 @@ COPY pyproject.toml ./
 # Install Python dependencies
 RUN uv pip install --system -r pyproject.toml
 
-# Create upload directory
-RUN mkdir -p /app/uploads && chmod 755 /app/uploads
-
 # Copy application code
 COPY . .
 
