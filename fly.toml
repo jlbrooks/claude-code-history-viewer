@@ -1,0 +1,39 @@
+# fly.toml app configuration file generated for claude-logs
+
+app = "claude-logs"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  CLAUDE_MODE = "cloud"
+  UPLOAD_FOLDER = "/app/uploads"
+  MAX_CONTENT_LENGTH = "52428800"  # 50MB
+  SESSION_TIMEOUT_HOURS = "24"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health"
+
+[vm]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+
+[[mounts]]
+  source = "uploads_data"
+  destination = "/app/uploads"
+
+[deploy]
+  release_command = "python -c 'import os; os.makedirs(\"/app/uploads/sessions\", exist_ok=True)'"

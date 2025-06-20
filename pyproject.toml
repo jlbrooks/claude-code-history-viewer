@@ -1,11 +1,12 @@
 [project]
-name = "claude-code-history-viewer"
+name = "claude-logs"
 version = "0.1.0"
-description = "A local web application for browsing and exploring your Claude Code conversation history"
+description = "A web application for browsing and exploring your Claude Code conversation history"
 requires-python = ">=3.8"
 dependencies = [
     "flask==3.0.0",
     "werkzeug>=3.0.0",
+    "gunicorn>=21.2.0",
 ]
 
 [tool.uv]

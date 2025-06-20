@@ -1,6 +1,6 @@
-# Claude Code History Viewer
+# Claude Logs
 
-A local web application for browsing and exploring your Claude Code conversation history with an intuitive interface and advanced tool interaction display.
+A web application for browsing and exploring your Claude Code conversation history with an intuitive interface and advanced tool interaction display.
 
 ## Features
 
@@ -108,7 +108,27 @@ The application can be configured using environment variables:
 
 ## Cloud Deployment
 
-For production deployment:
+### Fly.io Deployment (Recommended)
+
+Deploy to fly.io with one command:
+
+```bash
+./deploy.sh
+```
+
+Or manually:
+```bash
+flyctl apps create claude-logs
+flyctl volumes create uploads_data --region sjc --size 1
+flyctl secrets set SECRET_KEY="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+flyctl deploy
+```
+
+See [DEPLOYMENT.md](DEPLOYMENT.md) for detailed instructions.
+
+### Generic Cloud Deployment
+
+For other cloud providers:
 
 1. **Set production environment variables:**
    ```bash
@@ -118,18 +138,24 @@ For production deployment:
    export MAX_CONTENT_LENGTH=52428800  # 50MB
    ```
 
-2. **Use a production WSGI server:**
+2. **Use the included Dockerfile:**
    ```bash
-   pip install gunicorn
-   gunicorn -w 4 -b 0.0.0.0:5000 app:app
+   docker build -t claude-logs .
+   docker run -p 8080:8080 -e SECRET_KEY="your-key" claude-logs
    ```
 
-3. **Security considerations:**
-   - Set a strong, random SECRET_KEY
-   - Configure appropriate file size limits
-   - Set up proper session cleanup
-   - Use HTTPS in production
-   - Consider rate limiting for uploads
+3. **Or use a production WSGI server:**
+   ```bash
+   uv sync
+   uv run gunicorn -w 4 -b 0.0.0.0:8080 app:app
+   ```
+
+### Security considerations:
+- Set a strong, random SECRET_KEY
+- Configure appropriate file size limits
+- Set up proper session cleanup
+- Use HTTPS in production
+- Consider rate limiting for uploads
 
 ## Development
 

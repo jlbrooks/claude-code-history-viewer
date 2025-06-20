@@ -102,3 +102,7 @@ logs/
 .claude/
 session_*/
 temp_*/
+
+# Fly.io
+.fly/
+fly.toml.bak

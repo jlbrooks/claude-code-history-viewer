@@ -358,6 +358,15 @@ def index():
     cleanup_old_sessions()  # Clean up on each page load
     return render_template('index.html', claude_mode=CLAUDE_MODE)
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for monitoring"""
+    return jsonify({
+        'status': 'healthy',
+        'mode': CLAUDE_MODE,
+        'timestamp': datetime.now().isoformat()
+    })
+
 @app.route('/api/config')
 def api_config():
     """Get app configuration"""
